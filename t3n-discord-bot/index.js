@@ -56,7 +56,7 @@ const client = new Client({
   ] 
 });
 
-const TARGET_CHANNEL_ID = process.env.CHANNEL_ID || '1472704260452909146';
+const TARGET_CHANNEL_ID = process.env.CHANNEL_ID || '1473614279520550944';
 const DISCORD_TOKEN = process.env.DISCORD_TOKEN;
 
 if (!DISCORD_TOKEN) {
