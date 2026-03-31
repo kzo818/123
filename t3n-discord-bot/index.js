@@ -19,17 +19,18 @@ const {
   joinVoiceChannel, 
   createAudioPlayer, 
   createAudioResource, 
-  AudioPlayerStatus 
+  AudioPlayerStatus,
+  getVoiceConnection
 } = require('@discordjs/voice');
 const path = require('path');
 const fs = require('fs');
+const play = require('play-dl');
 
-// =============== إعداد سيرفر الويب (لإبقاء البوت شغال 24/7 مجاناً) ===============
+// =============== Web Server (Keep-Alive) ===============
 const webServer = express();
-webServer.get('/', (req, res) => res.send('T3N Bot is Alive 24/7!'));
+webServer.get('/', (req, res) => res.send('T3N SYSTEM ALIVE 24/7'));
 const PORT = process.env.PORT || 3000;
-webServer.listen(PORT, () => console.log(`🚀 Keep-Alive Web Server is running on port ${PORT}`));
-// =================================================================================
+webServer.listen(PORT, () => console.log(`🚀 Web Server is running on port ${PORT}`));
 
 // ====== Firebase Setup ======
 const { initializeApp } = require('firebase/app');
@@ -52,7 +53,8 @@ const client = new Client({
   intents: [
     GatewayIntentBits.Guilds, 
     GatewayIntentBits.GuildMessages, 
-    GatewayIntentBits.GuildVoiceStates
+    GatewayIntentBits.GuildVoiceStates,
+    GatewayIntentBits.GuildMembers
   ] 
 });
 
@@ -64,12 +66,15 @@ if (!DISCORD_TOKEN) {
   process.exit(1);
 }
 
-// ====== Order Generation Logic ======
-// Note: Orders are typically created via Salla, but for testing/manual we can create dummy ones
+// Global Music Player Engine
+let globalAudioPlayer = createAudioPlayer();
+let isPaused = false;
+
+// ====== Key / Order Generators ======
 function generateOrderNumber() {
   const chars = '0123456789';
-  let result = '2';
-  for (let i = 0; i < 8; i++) {
+  let result = '24';
+  for (let i = 0; i < 7; i++) {
     result += chars[Math.floor(Math.random() * chars.length)];
   }
   return result;
@@ -97,336 +102,273 @@ async function createDatabaseKey(username) {
   return orderId;
 }
 
-// ====== Ready & Slash Commands Registration ======
+// ====== Ready & Commands ======
 client.once('ready', async () => {
   console.log(`✅ Logged in to Discord as ${client.user.tag}`);
   
-  // Registering the slash command /koz to the specific guild for instant updates
   const rest = new REST({ version: '10' }).setToken(DISCORD_TOKEN);
-  const GUILD_ID = '1396959491786018826'; // His actual server ID
+  const GUILD_ID = '1396959491786018826'; 
   
   try {
-    console.log('🔄 Registering slash commands for the Guild...');
+    console.log('🔄 Registering slash commands...');
     await rest.put(
       Routes.applicationGuildCommands(client.user.id, GUILD_ID),
       { body: [
         {
           name: 'koz',
-          description: 'فتح لوحة تحكم مفاتيح T3N (للأدمن فقط)',
+          description: 'فتح لوحة التحكم الاحترافية للمتجر والإدارة (الأدمن فقط)',
           default_member_permissions: String(PermissionFlagsBits.Administrator)
         }
       ] }
     );
-    console.log('✅ Slash commands registered successfully.');
+    console.log('✅ Commands registered!');
   } catch (error) {
-    console.error('⚠️ [ERROR] Failed to register slash commands:', error);
+    console.error('⚠️ Failed to register slash commands:', error);
   }
 });
 
-// ====== Interaction Handler ======
+// ====== Main Interaction ======
 client.on('interactionCreate', async (interaction) => {
-  
-  // --- 1. /koz Command (Show Panel) ---
-  if (interaction.isChatInputCommand()) {
-    if (interaction.commandName === 'koz') {
-      
-      // Security: Check if it's the right channel
-      if (interaction.channelId !== TARGET_CHANNEL_ID) {
-        return interaction.reply({ 
-          content: `❌ هذا الأمر لا يعمل هنا. يرجى استخدامه في القناة المخصصة له <#${TARGET_CHANNEL_ID}>`, 
-          ephemeral: true 
-        });
-      }
-
-      // 🛡️ Security: Check Discord Admninistrator Permission
-      if (!interaction.memberPermissions.has(PermissionFlagsBits.Administrator)) {
-        return interaction.reply({ content: '❌ لا تملك صلاحيات الأدمن لاستخدام هذه اللوحة.', ephemeral: true });
-      }
-
-      const embed = new EmbedBuilder()
-        .setTitle('👑 T3N ORDERS MANAGEMENT - لوحة تحكم الطلبات')
-        .setDescription('مرحباً بك في لوحة تحكم طلبات T3N.\nأي إجراء تقوم به هنا ينعكس فوراً على الموقع الرسمي (Real-Time).\nالرجاء اختيار أحد الإجراءات من الأزرار بالأسفل:')
-        .setColor('#FFA500') // Orange/Amber Theme
-        .setThumbnail(client.user.displayAvatarURL())
-        .setFooter({ text: `T3N Security System - Requested by ${interaction.user.tag}` })
-        .setTimestamp();
-
-      const row1 = new ActionRowBuilder().addComponents(
-        new ButtonBuilder().setCustomId('btn_create_single').setLabel('🔑 إنشاء طلب مانوال').setStyle(ButtonStyle.Success),
-        new ButtonBuilder().setCustomId('btn_create_bulk').setLabel('📋 إنشاء متعدد 🔑').setStyle(ButtonStyle.Primary),
-        new ButtonBuilder().setCustomId('btn_ban').setLabel('🚫 حظر طلب').setStyle(ButtonStyle.Danger)
-      );
-
-      const row2 = new ActionRowBuilder().addComponents(
-        new ButtonBuilder().setCustomId('btn_freeze').setLabel('❄️ تجميد طلب').setStyle(ButtonStyle.Secondary),
-        new ButtonBuilder().setCustomId('btn_unban').setLabel('✅ فك حظر/تجميد').setStyle(ButtonStyle.Success),
-        new ButtonBuilder().setCustomId('btn_delete').setLabel('🗑️ حذف طلب').setStyle(ButtonStyle.Danger)
-      );
-
-      await interaction.reply({ embeds: [embed], components: [row1, row2], ephemeral: true });
+  if (interaction.isChatInputCommand() && interaction.commandName === 'koz') {
+    if (interaction.channelId !== TARGET_CHANNEL_ID) {
+      return interaction.reply({ content: `❌ استخدم الأمر هنا <#${TARGET_CHANNEL_ID}>`, ephemeral: true });
     }
+    if (!interaction.memberPermissions.has(PermissionFlagsBits.Administrator)) {
+      return interaction.reply({ content: '❌ لا تملك صلاحيات.', ephemeral: true });
+    }
+
+    // Embed 1: Store Panel
+    const storeEmbed = new EmbedBuilder()
+      .setTitle('🛒 T3N - إدارة الموقع والطلبات')
+      .setColor('#00FF7F')
+      .setDescription('تحكم كامل بطلبات ومفاتيح الموقع وارتباطها بفايربيس الحقيقي.');
+
+    const rowStore1 = new ActionRowBuilder().addComponents(
+      new ButtonBuilder().setCustomId('btn_create_single').setLabel('🔑 إنشاء طلب مفرد').setStyle(ButtonStyle.Success),
+      new ButtonBuilder().setCustomId('btn_create_bulk').setLabel('📋 إنشاء متعدد').setStyle(ButtonStyle.Primary),
+      new ButtonBuilder().setCustomId('btn_ban').setLabel('🚫 تجميد الطلب').setStyle(ButtonStyle.Danger)
+    );
+
+    // Embed 2: Management & Music Panel
+    const modEmbed = new EmbedBuilder()
+      .setTitle('⚙️ T3N - الإدارة الشاملة والصوتيات')
+      .setColor('#FF4500')
+      .setDescription('تحكم كامل بالسيرفر: الميوت، الطرد، الرومات الصوتية، وتشغيل ملفات (يوتيوب) بالموسيقى بدقة عالية.')
+      .setThumbnail(client.user.displayAvatarURL());
+
+    const rowMusic = new ActionRowBuilder().addComponents(
+      new ButtonBuilder().setCustomId('btn_voice_join').setLabel('🔊 ادخال البوت للروم').setStyle(ButtonStyle.Primary),
+      new ButtonBuilder().setCustomId('btn_voice_play').setLabel('▶️ تشغيل يوتيوب').setStyle(ButtonStyle.Success),
+      new ButtonBuilder().setCustomId('btn_voice_pause').setLabel('⏸️ تشغيل / إيقاف').setStyle(ButtonStyle.Secondary),
+      new ButtonBuilder().setCustomId('btn_voice_stop').setLabel('⏹️ إنهاء الصوت').setStyle(ButtonStyle.Danger),
+      new ButtonBuilder().setCustomId('btn_voice_leave').setLabel('🚪 خروج البوت').setStyle(ButtonStyle.Danger)
+    );
+
+    const rowMod = new ActionRowBuilder().addComponents(
+      new ButtonBuilder().setCustomId('btn_mod_mute').setLabel('🔇 إعطاء/فك ميوت').setStyle(ButtonStyle.Secondary),
+      new ButtonBuilder().setCustomId('btn_mod_deafen').setLabel('🎧 ديفن / فك ديفن').setStyle(ButtonStyle.Secondary),
+      new ButtonBuilder().setCustomId('btn_mod_kick').setLabel('🔨 طرد عضو').setStyle(ButtonStyle.Danger)
+    );
+
+    const rowMsg = new ActionRowBuilder().addComponents(
+      new ButtonBuilder().setCustomId('btn_msg_room').setLabel('💬 إرسال رسالة لروم').setStyle(ButtonStyle.Primary),
+      new ButtonBuilder().setCustomId('btn_msg_dm').setLabel('📩 إرسال رسالة بالخاص').setStyle(ButtonStyle.Primary)
+    );
+
+    await interaction.reply({ 
+      embeds: [storeEmbed, modEmbed], 
+      components: [rowStore1, rowMusic, rowMod, rowMsg], 
+      ephemeral: true 
+    });
     return;
   }
 
-  // Permissions Check for buttons/modals
   if (interaction.isButton() || interaction.isModalSubmit()) {
     if (!interaction.memberPermissions.has(PermissionFlagsBits.Administrator)) {
       return interaction.reply({ content: '❌ صلاحيات مرفوضة.', ephemeral: true });
     }
   }
 
-  // --- 2. Button Interactions ---
+  // ====== Button Handlers ======
   if (interaction.isButton()) {
-    
-    // A. Single Key Creation
-    if (interaction.customId === 'btn_create_single') {
-      await interaction.deferReply();
-      try {
-        const key = await createDatabaseKey(interaction.user.tag);
-        const embed = new EmbedBuilder()
-          .setTitle('✅ تم إنشاء المفتاح بنجاح')
-          .setDescription(`\`\`\`${key}\`\`\``)
-          .addFields({ name: 'الحالة', value: '🟢 جاهز للاستخدام', inline: true })
-          .setColor('#001F3F') // كحلي Navy Blue
-          .setFooter({ text: 'تمت المزامنة فوراً مع قاعدة البيانات' });
-        await interaction.editReply({ embeds: [embed] });
-      } catch (err) {
-        console.error(err);
-        await interaction.editReply({ content: '❌ حدث خطأ داخلي أثناء إنشاء المفتاح.' });
-      }
-    }
+    const id = interaction.customId;
 
-    // B. Bulk Creation Modal
-    else if (interaction.customId === 'btn_create_bulk') {
-      const modal = new ModalBuilder()
-        .setCustomId('modal_create_bulk')
-        .setTitle('إنشاء مفاتيح متعددة');
-      const amountInput = new TextInputBuilder()
-        .setCustomId('input_amount')
-        .setLabel('كم عدد المفاتيح التي تريد إنشاءها؟ (الحد: 50)')
-        .setStyle(TextInputStyle.Short)
-        .setRequired(true)
-        .setMinLength(1)
-        .setMaxLength(2)
-        .setPlaceholder('مثال: 10');
-      modal.addComponents(new ActionRowBuilder().addComponents(amountInput));
+    // --- STORE BUTTONS ---
+    if (id === 'btn_create_single') {
+      await interaction.deferReply();
+      const code = await createDatabaseKey(interaction.user.tag);
+      await interaction.editReply(`✅ تم إنشاء الطلب بنجاح:\n\`\`\`${code}\`\`\``);
+    } 
+    else if (id === 'btn_create_bulk') {
+      const modal = new ModalBuilder().setCustomId('modal_create_bulk').setTitle('إنشاء طلبات متعددة');
+      modal.addComponents(new ActionRowBuilder().addComponents(
+        new TextInputBuilder().setCustomId('input_amount').setLabel('العدد: (حد 50)').setStyle(TextInputStyle.Short).setRequired(true)
+      ));
+      await interaction.showModal(modal);
+    }
+    else if (id === 'btn_ban') {
+      const modal = new ModalBuilder().setCustomId('modal_ban').setTitle('تجميد أو تعطيل طلب');
+      modal.addComponents(new ActionRowBuilder().addComponents(
+        new TextInputBuilder().setCustomId('input_key').setLabel('اكتب رقم الطلب:').setStyle(TextInputStyle.Short).setRequired(true)
+      ));
       await interaction.showModal(modal);
     }
 
-    // C. Common Modal Launcher for Ban/Freeze/Unban/Delete
-    else if (['btn_ban', 'btn_freeze', 'btn_unban', 'btn_delete'].includes(interaction.customId)) {
-      const actionLabels = {
-        'btn_ban': 'حظر',
-        'btn_freeze': 'تجميد',
-        'btn_unban': 'فك حظر',
-        'btn_delete': 'حذف'
-      };
-      const actionName = actionLabels[interaction.customId];
-      
-      const modal = new ModalBuilder()
-        .setCustomId(`modal_${interaction.customId.replace('btn_', '')}`)
-        .setTitle(`${actionName} طلب`);
-      const keyInput = new TextInputBuilder()
-        .setCustomId('input_key')
-        .setLabel(`أدخل الطلب المراد ${actionName}ه:`)
-        .setStyle(TextInputStyle.Short)
-        .setRequired(true)
-        .setMaxLength(9)
-        .setPlaceholder('2XXXXXXXX');
-      modal.addComponents(new ActionRowBuilder().addComponents(keyInput));
+    // --- MUSIC BUTTONS ---
+    else if (id === 'btn_voice_join') {
+      const modal = new ModalBuilder().setCustomId('modal_voice_join').setTitle('إدخال البوت لروم صوتي');
+      modal.addComponents(new ActionRowBuilder().addComponents(
+        new TextInputBuilder().setCustomId('input_vc').setLabel('أدخل ID الروم الصوتي:').setStyle(TextInputStyle.Short).setRequired(true)
+      ));
+      await interaction.showModal(modal);
+    }
+    else if (id === 'btn_voice_play') {
+      const modal = new ModalBuilder().setCustomId('modal_voice_play').setTitle('تشغيل يوتيوب أو ميوزك');
+      modal.addComponents(new ActionRowBuilder().addComponents(
+        new TextInputBuilder().setCustomId('input_url').setLabel('رابط اليوتيوب Youtube URL:').setStyle(TextInputStyle.Short).setRequired(true)
+      ));
+      await interaction.showModal(modal);
+    }
+    else if (id === 'btn_voice_pause') {
+      if (isPaused) { globalAudioPlayer.unpause(); isPaused = false; await interaction.reply({content:'▶️ تم استكمال الصوت.', ephemeral:true}); }
+      else { globalAudioPlayer.pause(); isPaused = true; await interaction.reply({content:'⏸️ تم إيقاف الصوت مؤقتاً.', ephemeral:true}); }
+    }
+    else if (id === 'btn_voice_stop') {
+      globalAudioPlayer.stop();
+      await interaction.reply({ content: '⏹️ تم إنهاء المقطع الصوتي.', ephemeral: true });
+    }
+    else if (id === 'btn_voice_leave') {
+      const connection = getVoiceConnection(interaction.guildId);
+      if (connection) { connection.destroy(); await interaction.reply({content:'🚪 تم الخروج من الروم الصوتي.', ephemeral:true}); }
+      else { await interaction.reply({content:'❌ البوت ليس في أي روم.', ephemeral:true}); }
+    }
+
+    // --- MODERATION BUTTONS ---
+    else if (id === 'btn_mod_mute' || id === 'btn_mod_deafen' || id === 'btn_mod_kick') {
+      let title = id === 'btn_mod_mute' ? 'ميوت عضو' : (id === 'btn_mod_deafen' ? 'ديفن عضو' : 'طرد عضو');
+      const modal = new ModalBuilder().setCustomId(`modal_${id}`).setTitle(title);
+      modal.addComponents(new ActionRowBuilder().addComponents(
+        new TextInputBuilder().setCustomId('input_user').setLabel('أدخل ID الخاص بالعضو:').setStyle(TextInputStyle.Short).setRequired(true)
+      ));
+      await interaction.showModal(modal);
+    }
+
+    // --- MESSAGING BUTTONS ---
+    else if (id === 'btn_msg_room' || id === 'btn_msg_dm') {
+      let title = id === 'btn_msg_room' ? 'إرسال לרوم' : 'إرسال للخاص';
+      const modal = new ModalBuilder().setCustomId(`modal_${id}`).setTitle(title);
+      modal.addComponents(new ActionRowBuilder().addComponents(
+        new TextInputBuilder().setCustomId('input_target').setLabel('رقم ID (الروم أو الشخص):').setStyle(TextInputStyle.Short).setRequired(true)
+      ));
+      modal.addComponents(new ActionRowBuilder().addComponents(
+        new TextInputBuilder().setCustomId('input_msg').setLabel('الرسالة:').setStyle(TextInputStyle.Paragraph).setRequired(true)
+      ));
       await interaction.showModal(modal);
     }
   }
 
-  // --- 3. Modal Interactions ---
+  // ====== Modal Handlers ======
   if (interaction.isModalSubmit()) {
-    
-    // A. Bulk Creation Handler
-    if (interaction.customId === 'modal_create_bulk') {
+    const id = interaction.customId;
+
+    // STORE
+    if (id === 'modal_create_bulk') {
       await interaction.deferReply();
-      const amountStr = interaction.fields.getTextInputValue('input_amount');
-      const amount = parseInt(amountStr);
-      
-      if (isNaN(amount) || amount <= 0 || amount > 50) {
-        return interaction.editReply({ content: '❌ الرجاء إدخال رقم صحيح بين 1 و 50.' });
-      }
-
-      try {
-        const keys = [];
-        for (let i = 0; i < amount; i++) {
-          const k = await createDatabaseKey(interaction.user.tag);
-          keys.push(k);
-        }
-        
-        const keysStr = keys.join('\n');
-        const embed = new EmbedBuilder()
-          .setTitle('✅ إنشاء متعدد - نجاح!')
-          .setDescription(`تم إنشاء **${amount}** مفتاح وإضافتهم فوراً للقاعدة:\n\`\`\`\n${keysStr}\n\`\`\``)
-          .setColor('#001F3F') // كحلي Navy Blue
-          .setFooter({ text: 'T3N Database Sync' });
-        
-        await interaction.editReply({ embeds: [embed] });
-      } catch (err) {
-        console.error(err);
-        await interaction.editReply({ content: '❌ فشل في إنشاء المفاتيح المتعددة بسبب خطأ داخلي.' });
-      }
+      const amount = parseInt(interaction.fields.getTextInputValue('input_amount'));
+      if (isNaN(amount) || amount > 50) return interaction.editReply('❌ خطأ في العدد.');
+      const keys = [];
+      for (let i = 0; i < amount; i++) keys.push(await createDatabaseKey(interaction.user.tag));
+      await interaction.editReply(`✅ تم إنشاء ${amount} طلبات:\n\`\`\`${keys.join('\n')}\`\`\``);
     }
-
-    // B. Ban / Freeze / Unban Handler
-    else if (['modal_ban', 'modal_freeze', 'modal_unban'].includes(interaction.customId)) {
+    else if (id === 'modal_ban') {
       await interaction.deferReply({ ephemeral: true });
-      const keyId = interaction.fields.getTextInputValue('input_key').trim().replace(/\s/g, '');
-      
-      if (!/^2\d{8}$/.test(keyId)) {
-        return interaction.editReply({ content: '❌ صيغة رقم الطلب غير صحيحة. يجب أن يبدأ بـ 2 ويتكون من 9 أرقام.' });
-      }
-
-      try {
-        let newStatus = '';
-        let color = '';
-        let title = '';
-        
-        if (interaction.customId === 'modal_ban') {
-          newStatus = 'banned'; color = '#FF0000'; title = '🚫 تم حظر الطلب';
-        } else if (interaction.customId === 'modal_freeze') {
-          newStatus = 'frozen'; color = '#00FFFF'; title = '❄️ تم تجميد الطلب';
-        } else if (interaction.customId === 'modal_unban') {
-          newStatus = 'active'; color = '#00FF00'; title = '✅ تم فك الحظر والتجميد عن الطلب';
-        }
-
-        const keyRef = doc(db, "orders", keyId);
-        const keySnap = await getDoc(keyRef);
-        
-        if (!keySnap.exists()) {
-          return interaction.editReply({ content: '❌ الطلب غير موجود في قاعدة البيانات.' });
-        }
-        
-        const keyData = keySnap.data();
-
-        if ((newStatus === 'banned' || newStatus === 'frozen') && keyData.usedByUid) {
-          const userRef = doc(db, "users", keyData.usedByUid);
-          await setDoc(userRef, { isVIP: false }, { merge: true });
-        }
-
-        await setDoc(keyRef, { status: newStatus }, { merge: true });
-
-        const embed = new EmbedBuilder()
-          .setTitle(title)
-          .setDescription(`تم تطبيق الإجراء على المفتاح: \`${keyId}\``)
-          .setColor(color)
-          .setFooter({ text: 'تمت المزامنة فوراً مع الموقع' });
-          
-        await interaction.editReply({ embeds: [embed] });
-
-      } catch (err) {
-        console.error(err);
-        await interaction.editReply({ content: '❌ فشل الاتصال بقاعدة البيانات. حاول ثانية.' });
-      }
-    }
-
-    // C. Delete Handler
-    else if (interaction.customId === 'modal_delete') {
-      await interaction.deferReply({ ephemeral: true });
-      const keyId = interaction.fields.getTextInputValue('input_key').trim().replace(/\s/g, '');
-      
+      const keyId = interaction.fields.getTextInputValue('input_key').trim();
       try {
         const keyRef = doc(db, "orders", keyId);
-        const keySnap = await getDoc(keyRef);
-        
-        if (!keySnap.exists()) {
-          return interaction.editReply({ content: '❌ الطلب غير موجود في قاعدة البيانات.' });
-        }
-        
-        const keyData = keySnap.data();
-        if (keyData.usedByUid) {
-          const userRef = doc(db, "users", keyData.usedByUid);
-          await setDoc(userRef, { isVIP: false }, { merge: true });
-        }
+        await setDoc(keyRef, { status: 'frozen' }, { merge: true });
+        await interaction.editReply('✅ تم تجميد الطلب من فايربيس بنجاح.');
+      } catch (err) { await interaction.editReply('❌ فشل.'); }
+    }
 
-        await deleteDoc(keyRef);
+    // VOICE: JOIN
+    else if (id === 'modal_voice_join') {
+      const vcTarget = interaction.fields.getTextInputValue('input_vc').trim();
+      const channel = interaction.guild.channels.cache.get(vcTarget);
+      if (!channel || !channel.isVoiceBased()) return interaction.reply({content:'❌ لم يتم العثور على الروم الصوتي.', ephemeral:true});
+      try {
+        const connection = joinVoiceChannel({ channelId: channel.id, guildId: interaction.guild.id, adapterCreator: interaction.guild.voiceAdapterCreator });
+        connection.subscribe(globalAudioPlayer);
+        await interaction.reply({content:`✅ البوت دخل الآن لـ ${channel.name}`, ephemeral:true});
+      } catch (err) { await interaction.reply({content:'❌ فشل الدخول.', ephemeral:true}); }
+    }
 
-        const embed = new EmbedBuilder()
-          .setTitle('🗑️ تم حذف الطلب نهائياً')
-          .setDescription(`الطلب \`${keyId}\` مُسح من قاعدة البيانات نهائياً.`)
-          .setColor('#FF0000');
-          
-        await interaction.editReply({ embeds: [embed] });
+    // VOICE: PLAY
+    else if (id === 'modal_voice_play') {
+      await interaction.deferReply({ ephemeral:true });
+      const url = interaction.fields.getTextInputValue('input_url').trim();
+      const connection = getVoiceConnection(interaction.guild.id);
+      if (!connection) return interaction.editReply('❌ البوت لازم يكون بالروم أولاً! (استخدم زر ادخال البوت)');
+      try {
+        const stream = await play.stream(url, { discordPlayerCompatibility: true });
+        const resource = createAudioResource(stream.stream, { inputType: stream.type });
+        globalAudioPlayer.play(resource);
+        isPaused = false;
+        await interaction.editReply(`▶️ جاري تشغيل المقطع بنجاح!`);
       } catch (err) {
         console.error(err);
-        await interaction.editReply({ content: '❌ فشل الحذف بسبب خطأ داخلي.' });
+        await interaction.editReply('❌ فشل في تشغيل الرابط. تأكد إنه رابط يوتيوب صالح (وليس خاص).');
       }
+    }
+
+    // MODERATION: MUTE / DEAFEN / KICK
+    else if (id === 'modal_btn_mod_mute' || id === 'modal_btn_mod_deafen' || id === 'modal_btn_mod_kick') {
+      await interaction.deferReply({ ephemeral: true });
+      const targetUserId = interaction.fields.getTextInputValue('input_user').trim();
+      try {
+        const member = await interaction.guild.members.fetch(targetUserId);
+        if (!member) throw new Error();
+        
+        if (id === 'modal_btn_mod_mute') {
+          const isMuted = member.voice.serverMute;
+          await member.voice.setMute(!isMuted);
+          await interaction.editReply(`✅ تم ${!isMuted ? 'إعطاء ميوت' : 'فك الميوت'} للعضو.`);
+        } 
+        else if (id === 'modal_btn_mod_deafen') {
+          const isDeaf = member.voice.serverDeaf;
+          await member.voice.setDeaf(!isDeaf);
+          await interaction.editReply(`✅ تم ${!isDeaf ? 'إعطاء ديفن' : 'فك الديفن'} للعضو.`);
+        }
+        else if (id === 'modal_btn_mod_kick') {
+          await member.kick('Kicked via T3N Admin Panel');
+          await interaction.editReply(`✅ تم طرد العضو بنجاح.`);
+        }
+      } catch (err) {
+        await interaction.editReply('❌ فشل! تأكد إن ID العضو صحيح (وإن العضو بالروم إذا كان ميوت/ديفن)، وتأكد إن رتبة البوت أعلى منه.');
+      }
+    }
+
+    // MESSAGING
+    else if (id === 'modal_btn_msg_room') {
+      const channelId = interaction.fields.getTextInputValue('input_target').trim();
+      const msg = interaction.fields.getTextInputValue('input_msg');
+      try {
+        const channel = interaction.guild.channels.cache.get(channelId);
+        await channel.send(msg);
+        await interaction.reply({content:'✅ تم الإرسال بلسان البوت.', ephemeral:true});
+      } catch { await interaction.reply({content:'❌ خطأ بالروم.', ephemeral:true}); }
+    }
+    else if (id === 'modal_btn_msg_dm') {
+      const userId = interaction.fields.getTextInputValue('input_target').trim();
+      const msg = interaction.fields.getTextInputValue('input_msg');
+      try {
+        const user = await client.users.fetch(userId);
+        await user.send(msg);
+        await interaction.reply({content:'✅ تم الإرسال للخاص بنجاح.', ephemeral:true});
+      } catch { await interaction.reply({content:'❌ فشل! ربما العضو مقفل الخاص.', ephemeral:true}); }
     }
   }
 });
 
-// ====== Voice Welcome Logic ======
-const WELCOME_VC_ID = '1396967239948701859';
-
-async function connectToWelcomeChannel() {
-  const guild = client.guilds.cache.get('1396959491786018826');
-  if (!guild) return;
-  const channel = guild.channels.cache.get(WELCOME_VC_ID);
-  if (!channel) return;
-
-  try {
-    joinVoiceChannel({
-      channelId: WELCOME_VC_ID,
-      guildId: guild.id,
-      adapterCreator: guild.voiceAdapterCreator,
-    });
-    console.log(`📡 [Voice] Permanent connection established in ${channel.name}`);
-  } catch (err) {
-    console.error('❌ Failed to join permanent channel:', err);
-  }
-}
-
-client.on('ready', () => {
-  connectToWelcomeChannel();
-});
-
-client.on('voiceStateUpdate', async (oldState, newState) => {
-  // Only react if someone joins the specific Welcome VC
-  if (!oldState.channelId && newState.channelId === WELCOME_VC_ID) {
-    const channel = newState.channel;
-    if (!channel) return;
-
-    if (newState.member.user.bot) return;
-
-    console.log(`🔊 [Voice] ${newState.member.user.tag} entered the welcome room. Playing sound...`);
-
-    try {
-      const connection = joinVoiceChannel({
-        channelId: WELCOME_VC_ID,
-        guildId: channel.guild.id,
-        adapterCreator: channel.guild.voiceAdapterCreator,
-      });
-
-      const player = createAudioPlayer();
-      const resourcePath = path.join(__dirname, 'welcome.wav');
-      
-      if (!fs.existsSync(resourcePath)) {
-        console.error('❌ welcome.wav missing.');
-        return;
-      }
-
-      const resource = createAudioResource(resourcePath);
-      player.play(resource);
-      connection.subscribe(player);
-
-      // We do NOT destroy the connection here so it stays static
-      player.on('error', error => console.error(`❌ Audio error: ${error.message}`));
-
-    } catch (error) {
-      console.error('❌ [Voice Trigger Error]:', error);
-    }
-  }
-});
-
-console.log('🔄 Attempting Discord login...');
 client.login(DISCORD_TOKEN).catch(err => {
   console.error('❌ FATAL: Discord login failed:', err.message);
-});
-
-process.on('unhandledRejection', (err) => {
-  console.error('❌ Unhandled Rejection:', err);
 });
