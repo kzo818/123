@@ -1,0 +1,189 @@
+<!DOCTYPE html>
+<html lang="ar" dir="rtl">
+<head>
+  <meta charset="UTF-8">
+  <title>T3N Bot Control Panel</title>
+  <script src="https://cdn.tailwindcss.com"></script>
+  <script src="https://unpkg.com/vue@3/dist/vue.global.js"></script>
+  <style>
+    body { background: #0f172a; color: #f8fafc; font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif; }
+    .glass { background: rgba(30, 41, 59, 0.7); backdrop-filter: blur(10px); border: 1px solid rgba(255, 255, 255, 0.1); border-radius: 12px; }
+  </style>
+</head>
+<body class="p-8">
+  <div id="app" class="max-w-6xl mx-auto">
+    <!-- Header -->
+    <header class="text-center mb-10">
+      <h1 class="text-5xl font-bold bg-clip-text text-transparent bg-gradient-to-r from-blue-400 to-emerald-400 mb-2">T3N Dashboard 👑</h1>
+      <p class="text-gray-400">لوحة تحكم احترافية للسيطرة على البوت والسيرفر بالكامل</p>
+    </header>
+
+    <div v-if="loading" class="text-center text-xl text-emerald-400">جاري تحميل بيانات السيرفر... ⏳</div>
+
+    <div v-else class="grid grid-cols-1 md:grid-cols-2 gap-8">
+
+      <!-- Send Messages Panel -->
+      <section class="glass p-6">
+        <h2 class="text-xl font-bold mb-4 text-blue-300">💬 التحدث باسم البوت</h2>
+        <div class="mb-4">
+          <label class="block text-sm mb-1 text-gray-300">اختر الروم (Text Channel):</label>
+          <select v-model="selectedChannel" class="w-full bg-slate-800 border border-slate-700 rounded p-2 text-white">
+            <option v-for="ch in textChannels" :value="ch.id">{{ ch.name }}</option>
+          </select>
+        </div>
+        <div class="mb-4">
+          <label class="block text-sm mb-1 text-gray-300">الرسالة:</label>
+          <textarea v-model="messageContent" class="w-full bg-slate-800 border border-slate-700 rounded p-2 text-white" rows="3" placeholder="مرحباً بالجميع..."></textarea>
+        </div>
+        <button @click="sendMessage" class="w-full bg-blue-600 hover:bg-blue-500 transition py-2 rounded font-bold">إرسال الرسالة للروم 🚀</button>
+      </section>
+
+      <!-- Music & Audio Panel -->
+      <section class="glass p-6">
+        <h2 class="text-xl font-bold mb-4 text-emerald-300">🎵 مدير الموسيقى والصوتيات</h2>
+        <div class="mb-4">
+          <label class="block text-sm mb-1 text-gray-300">اختر الروم الصوتي للبوت ليدخل فيه:</label>
+          <div class="flex gap-2">
+            <select v-model="selectedVoice" class="w-full bg-slate-800 border border-slate-700 rounded p-2 text-white">
+              <option v-for="vc in voiceChannels" :value="vc.id">{{ vc.name }}</option>
+            </select>
+            <button @click="joinVoice" class="bg-emerald-600 hover:bg-emerald-500 px-4 rounded font-bold whitespace-nowrap">دخول الروم</button>
+          </div>
+        </div>
+        <div class="mb-4">
+          <label class="block text-sm mb-1 text-gray-300">رابط YouTube أو TikTok:</label>
+          <div class="flex gap-2">
+            <input v-model="videoUrl" type="text" class="w-full bg-slate-800 border border-slate-700 rounded p-2 text-white" placeholder="https://youtu.be/...">
+            <button @click="playAudio" class="bg-purple-600 hover:bg-purple-500 px-4 rounded font-bold whitespace-nowrap">تشغيل ▶️</button>
+          </div>
+        </div>
+        
+        <!-- Controls -->
+        <div class="flex justify-between items-center bg-slate-800 p-3 rounded mt-4">
+          <button @click="musicAction('pause')" class="bg-slate-700 hover:bg-slate-600 px-4 py-2 rounded">⏸️ إيقاف مؤقت</button>
+          <button @click="musicAction('resume')" class="bg-slate-700 hover:bg-slate-600 px-4 py-2 rounded">▶️ إكمال</button>
+          <button @click="musicAction('stop')" class="bg-red-600 hover:bg-red-500 px-4 py-2 rounded text-white font-bold">⏹️ إنهاء وطرد</button>
+        </div>
+      </section>
+
+      <!-- Member Management Panel -->
+      <section class="glass p-6 md:col-span-2">
+        <h2 class="text-xl font-bold mb-4 text-red-400">🛠️ التحكم بالأعضاء (Voice Moderation)</h2>
+        <div class="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4">
+          <div v-for="member in voiceMembers" :key="member.id" class="bg-slate-800 p-4 rounded border border-slate-700 flex flex-col justify-between">
+            <div class="flex items-center gap-3 mb-3">
+              <img :src="member.avatar || 'https://cdn.discordapp.com/embed/avatars/0.png'" class="w-10 h-10 rounded-full">
+              <div>
+                <div class="font-bold text-sm">{{ member.name }}</div>
+                <div class="text-xs text-gray-400 text-left" dir="ltr">في روم: {{ member.channelName }}</div>
+              </div>
+            </div>
+            <div class="flex flex-wrap gap-2 text-xs">
+              <button @click="memberAction(member.id, 'mute')" class="bg-yellow-600 hover:bg-yellow-500 px-2 py-1 rounded">اسكات 🤐</button>
+              <button @click="memberAction(member.id, 'unmute')" class="bg-green-600 hover:bg-green-500 px-2 py-1 rounded">فك 🗣️</button>
+              <button @click="memberAction(member.id, 'deafen')" class="bg-orange-600 hover:bg-orange-500 px-2 py-1 rounded">دفن 🙉</button>
+              <button @click="memberAction(member.id, 'kick')" class="bg-red-600 hover:bg-red-500 px-2 py-1 rounded">طرد 👢</button>
+            </div>
+          </div>
+          <div v-if="voiceMembers.length === 0" class="text-gray-400 col-span-fulltext-center">لا يوجد أعضاء في الرومات الصوتية حالياً.</div>
+        </div>
+      </section>
+    </div>
+  </div>
+
+  <script>
+    const { createApp, ref, onMounted } = Vue;
+
+    createApp({
+      setup() {
+        const loading = ref(true);
+        const textChannels = ref([]);
+        const voiceChannels = ref([]);
+        const voiceMembers = ref([]);
+        
+        const selectedChannel = ref('');
+        const selectedVoice = ref('');
+        const messageContent = ref('');
+        const videoUrl = ref('');
+
+        const fetchData = async () => {
+          try {
+            const res = await fetch('/api/guild');
+            const data = await res.json();
+            textChannels.value = data.textChannels;
+            voiceChannels.value = data.voiceChannels;
+            voiceMembers.value = data.voiceMembers;
+            
+            if (textChannels.value.length) selectedChannel.value = textChannels.value[0].id;
+            if (voiceChannels.value.length) selectedVoice.value = voiceChannels.value[0].id;
+          } catch (err) {
+            console.error(err);
+            alert("حدث خطأ في جلب بيانات السيرفر.");
+          } finally {
+            loading.value = false;
+          }
+        };
+
+        const sendMessage = async () => {
+          if (!selectedChannel.value || !messageContent.value) return;
+          await fetch('/api/say', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ channelId: selectedChannel.value, message: messageContent.value })
+          });
+          messageContent.value = '';
+          alert('تم إرسال الرسالة بنجاح!');
+        };
+
+        const joinVoice = async () => {
+          await fetch('/api/vc/join', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ channelId: selectedVoice.value })
+          });
+          alert('البوت دخل الروم الصوتي! 🎙️');
+        };
+
+        const playAudio = async () => {
+          if (!videoUrl.value) return;
+          await fetch('/api/music/play', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ url: videoUrl.value })
+          });
+          videoUrl.value = '';
+          alert('جاري تشغيل المقطع في الروم الصوتي! 🎵');
+        };
+
+        const musicAction = async (action) => {
+          await fetch('/api/music/control', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ action })
+          });
+        };
+
+        const memberAction = async (userId, action) => {
+          await fetch('/api/member/control', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ userId, action })
+          });
+          setTimeout(fetchData, 1000); // refresh list
+        };
+
+        onMounted(() => {
+          fetchData();
+          setInterval(fetchData, 5000); // تحديث بيانات الأعضاء ورومات الصوت كل 5 ثواني
+        });
+
+        return {
+          loading, textChannels, voiceChannels, voiceMembers,
+          selectedChannel, selectedVoice, messageContent, videoUrl,
+          sendMessage, joinVoice, playAudio, musicAction, memberAction
+        };
+      }
+    }).mount('#app');
+  </script>
+</body>
+</html>
