@@ -142,7 +142,7 @@ client.once('ready', async () => {
       if (!hasPanel) {
         const embed = new EmbedBuilder()
           .setTitle('🛒 قسم المبيعات - متجر T3N')
-          .setDescription('أهلاً بك في قسم الشراء،\nالرجاء الضغط على الزر بالأسفل لاختيار المنتج واستكمال خطوات الدفع.')
+          .setDescription('أهلاً بك في قسم الشراء،\nالرجاء الضغط على الزر بالأسفل فقط عند الاستعداد للشراء ولاختيار المنتج واستكمال خطوات الدفع.')
           .setColor('#1E90FF');
 
         const btn = new ActionRowBuilder().addComponents(
@@ -172,7 +172,7 @@ client.on('interactionCreate', async (interaction) => {
 
       const embed = new EmbedBuilder()
         .setTitle('🛒 قسم المبيعات - متجر T3N')
-        .setDescription('أهلاً بك في قسم الشراء،\nالرجاء الضغط على الزر بالأسفل لاختيار المنتج واستكمال خطوات الدفع.')
+        .setDescription('أهلاً بك في قسم الشراء،\nالرجاء الضغط على الزر بالأسفل فقط عند الاستعداد للشراء ولاختيار المنتج واستكمال خطوات الدفع.')
         .setColor('#1E90FF');
 
       const btn = new ActionRowBuilder().addComponents(
@@ -496,6 +496,35 @@ client.on('messageCreate', async (message) => {
       console.log(`✅ Notification synced to Firebase: ${content.substring(0, 30)}...`);
     } catch (err) {
       console.error('❌ Failed to sync notification to Firebase:', err);
+    }
+  }
+});
+
+// ====== Auto-Send Buy Panel in Tickets ======
+client.on('channelCreate', async (channel) => {
+  // Check if it's an actual channel object and has a name with the ticket emoji
+  if (channel && channel.name && channel.name.includes('🎫')) {
+    try {
+      const embed = new EmbedBuilder()
+        .setTitle('🛒 قسم المبيعات - متجر T3N')
+        .setDescription('أهلاً بك في قسم الشراء،\nالرجاء الضغط على الزر بالأسفل فقط عند الاستعداد للشراء ولاختيار المنتج واستكمال خطوات الدفع.')
+        .setColor('#1E90FF');
+
+      const btn = new ActionRowBuilder().addComponents(
+        new ButtonBuilder()
+          .setCustomId('buy_panel_btn')
+          .setLabel('مستعد للشراء ؟')
+          .setStyle(ButtonStyle.Primary)
+      );
+
+      // Wait a short time to allow bot permissions/ticket messages to load
+      setTimeout(async () => {
+        await channel.send({ embeds: [embed], components: [btn] });
+      }, 2000);
+      
+      console.log(`✅ Sent Buy Panel in new ticket: ${channel.name}`);
+    } catch (err) {
+      console.error(`❌ Failed to send Buy Panel in ticket ${channel.name}:`, err);
     }
   }
 });
