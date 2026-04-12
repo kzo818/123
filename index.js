@@ -9,6 +9,8 @@ const {
   ModalBuilder, 
   TextInputBuilder, 
   TextInputStyle, 
+  StringSelectMenuBuilder,
+  StringSelectMenuOptionBuilder,
   REST, 
   Routes,
   PermissionFlagsBits
@@ -24,122 +26,11 @@ const {
 const path = require('path');
 const fs = require('fs');
 
-// =============== إعداد سيرفر الويب (لوحة التحكم والبقاء 24/7) ===============
-const cors = require('cors');
-const play = require('play-dl');
-
+// =============== إعداد سيرفر الويب (لإبقاء البوت شغال 24/7 مجاناً) ===============
 const webServer = express();
-webServer.use(cors());
-webServer.use(express.json());
-webServer.use(express.static(path.join(__dirname, 'public'))); // تقديم صفحة لوحة التحكم
-
-let globalAudioPlayer = createAudioPlayer();
-let globalAudioConnection = null;
-
-const GUILD_ID_FOR_PANEL = '1396959491786018826';
-
-// 1. استرجاع بيانات السيرفر
-webServer.get('/api/guild', async (req, res) => {
-  try {
-    const guild = client.guilds.cache.get(GUILD_ID_FOR_PANEL);
-    if (!guild) return res.json({ textChannels: [], voiceChannels: [], voiceMembers: [] });
-
-    const textChannels = guild.channels.cache.filter(c => c.type === 0).map(c => ({ id: c.id, name: c.name }));
-    const voiceChannels = guild.channels.cache.filter(c => c.type === 2).map(c => ({ id: c.id, name: c.name }));
-    
-    const voiceMembers = [];
-    guild.channels.cache.filter(c => c.type === 2).forEach(vc => {
-      vc.members.forEach(member => {
-        if (!member.user.bot) {
-          voiceMembers.push({
-            id: member.id,
-            name: member.user.username,
-            avatar: member.user.displayAvatarURL({ dynamic: true }),
-            channelName: vc.name
-          });
-        }
-      });
-    });
-
-    res.json({ textChannels, voiceChannels, voiceMembers });
-  } catch (err) { res.status(500).json({ error: err.message }); }
-});
-
-// 2. إرسال رسالة
-webServer.post('/api/say', async (req, res) => {
-  try {
-    const { channelId, message } = req.body;
-    const channel = client.channels.cache.get(channelId);
-    if (channel) await channel.send(message);
-    res.json({ success: true });
-  } catch (err) { res.status(500).json({ error: err.message }); }
-});
-
-// 3. التحكم بالأعضاء (طرد/ميوت/صمخ)
-webServer.post('/api/member/control', async (req, res) => {
-  try {
-    const { userId, action } = req.body;
-    const guild = client.guilds.cache.get(GUILD_ID_FOR_PANEL);
-    const member = await guild.members.fetch(userId);
-    if (!member || !member.voice.channel) return res.status(400).json({ error: 'العضو غير متصل بالروم' });
-
-    if (action === 'mute') await member.voice.setMute(true);
-    if (action === 'unmute') await member.voice.setMute(false);
-    if (action === 'deafen') await member.voice.setDeaf(true);
-    if (action === 'undeafen') await member.voice.setDeaf(false);
-    if (action === 'kick') await member.voice.disconnect();
-
-    res.json({ success: true });
-  } catch (err) { res.status(500).json({ error: err.message }); }
-});
-
-// 4. دخول روم صوتي
-webServer.post('/api/vc/join', async (req, res) => {
-  try {
-    const { channelId } = req.body;
-    const guild = client.guilds.cache.get(GUILD_ID_FOR_PANEL);
-    const channel = guild.channels.cache.get(channelId);
-    
-    globalAudioConnection = joinVoiceChannel({
-      channelId: channel.id,
-      guildId: guild.id,
-      adapterCreator: guild.voiceAdapterCreator,
-    });
-    globalAudioConnection.subscribe(globalAudioPlayer);
-    res.json({ success: true });
-  } catch (err) { res.status(500).json({ error: err.message }); }
-});
-
-// 5. تشغيل مقطع (Music)
-webServer.post('/api/music/play', async (req, res) => {
-  try {
-    const { url } = req.body;
-    if (!globalAudioConnection) return res.status(400).json({ error: 'البوت غير متصل في روم حاليا' });
-
-    let stream = await play.stream(url);
-    let resource = createAudioResource(stream.stream, { inputType: stream.type });
-    globalAudioPlayer.play(resource);
-    res.json({ success: true });
-  } catch (err) { res.status(500).json({ error: err.message }); }
-});
-
-// 6. التحكم بالصوت (إيقاف/إكمال)
-webServer.post('/api/music/control', async (req, res) => {
-  try {
-    const { action } = req.body;
-    if (action === 'pause') globalAudioPlayer.pause();
-    if (action === 'resume') globalAudioPlayer.unpause();
-    if (action === 'stop') {
-      globalAudioPlayer.stop();
-      if (globalAudioConnection) globalAudioConnection.destroy();
-      globalAudioConnection = null;
-    }
-    res.json({ success: true });
-  } catch (err) { res.status(500).json({ error: err.message }); }
-});
-
+webServer.get('/', (req, res) => res.send('T3N Bot is Alive 24/7!'));
 const PORT = process.env.PORT || 3000;
-webServer.listen(PORT, () => console.log(`🌍 Dashboard Web Server running on port ${PORT}`));
+webServer.listen(PORT, () => console.log(`🚀 Keep-Alive Web Server is running on port ${PORT}`));
 // =================================================================================
 
 // ====== Firebase Setup ======
@@ -224,12 +115,12 @@ client.once('ready', async () => {
       { body: [
         {
           name: 'koz',
-          description: 'فتح لوحة تحكم مفاتيح T3N (النسخة الجديدة)',
+          description: 'فتح لوحة تحكم مفاتيح T3N (للأدمن فقط)',
           default_member_permissions: String(PermissionFlagsBits.Administrator)
         },
         {
-          name: 'promo',
-          description: 'إرسال رسالة ترويجية مع صورة وأزرار (للأدمن فقط)',
+          name: 'setup_buy',
+          description: 'إرسال واجهة لوحة الشراء في الروم (للأدمن فقط)',
           default_member_permissions: String(PermissionFlagsBits.Administrator)
         }
       ] }
@@ -244,30 +135,27 @@ client.once('ready', async () => {
 client.on('interactionCreate', async (interaction) => {
   
   if (interaction.isChatInputCommand()) {
-    
-    // --- 0. /promo Command (Promo Message) ---
-    if (interaction.commandName === 'promo') {
+    if (interaction.commandName === 'setup_buy') {
       if (!interaction.memberPermissions.has(PermissionFlagsBits.Administrator)) {
         return interaction.reply({ content: '❌ لا تملك صلاحيات.', ephemeral: true });
       }
 
-      const promoEmbed = new EmbedBuilder()
-        .setTitle('🔥 عرض ألتيمت السبوفر ! 🔥')
-        .setDescription('احصل عليه الان من خلال الموقع الرسمي وتخطى جميع انواع الحظر. اضغط على الزر بالأسفل للذهاب للمتجر ↓')
-        .setImage('https://media.discordapp.net/attachments/1396959491786018826/1396967239948701859/Spfr.png') // Example banner URL
-        .setColor('#00E5FF');
+      const embed = new EmbedBuilder()
+        .setTitle('🛒 قسم المبيعات - متجر T3N')
+        .setDescription('أهلاً بك في قسم الشراء،\nالرجاء الضغط على الزر بالأسفل لاختيار المنتج واستكمال خطوات الدفع.')
+        .setColor('#1E90FF');
 
-      const promoRow = new ActionRowBuilder().addComponents(
+      const btn = new ActionRowBuilder().addComponents(
         new ButtonBuilder()
-          .setLabel('🛒 متجر T3N')
-          .setURL('https://t3n-2a2i.vercel.app/')
-          .setStyle(ButtonStyle.Link)
+          .setCustomId('buy_panel_btn')
+          .setLabel('مستعد للشراء ؟')
+          .setStyle(ButtonStyle.Primary)
       );
 
-      return interaction.reply({ embeds: [promoEmbed], components: [promoRow] });
+      await interaction.channel.send({ embeds: [embed], components: [btn] });
+      return interaction.reply({ content: '✅ تم إرسال رسالة الشراء بنجاح في هذا الروم التلقائي.', ephemeral: true });
     }
 
-    // --- 1. /koz Command (Show Panel) ---
     if (interaction.commandName === 'koz') {
       
       // Security: Check if it's the right channel
@@ -315,9 +203,63 @@ client.on('interactionCreate', async (interaction) => {
     }
   }
 
+  // --- Handle String Select Menus ---
+  if (interaction.isStringSelectMenu()) {
+    if (interaction.customId === 'buy_select_product') {
+      const selected = interaction.values[0];
+      let productName = '';
+      let price = '';
+      
+      if (selected === 'fn_unban') {
+        productName = 'فك باند فورت نايت';
+        price = '49.99 ريال';
+      } else if (selected === 'perm_unban') {
+        productName = 'فك باند العاب perm';
+        price = '29.99 ريال';
+      }
+
+      const embed = new EmbedBuilder()
+        .setTitle('🧾 تفاصيل الدفع لتأكيد الطلب')
+        .setDescription(`المنتج المطلوب: **${productName}**\nالسعر الإجمالي: **${price}**\n\nالرجاء تحويل المبلغ إلى الحساب البنكي التالي:`)
+        .addFields(
+          { name: '🏦 رقم الحساب (IBAN)', value: '`SA1205000068207052071000`' },
+          { name: '👤 اسم صاحب الحساب', value: 'ياسر محمد البلوي' },
+          { name: '⚠️ تعليمات الاستلام', value: 'بعد إتمام التحويل، يرجى إرسال **رسالة وإيصال التحويل في تذكرة الدعم** ليتم تسليمك رتبتك، منتجك، والمفتاح الخاص بك مباشرة.' }
+        )
+        .setColor('#2ecc71') // اللون الأخضر الرسمي
+        .setFooter({ text: 'T3N System - قسم الدفع الآلي' })
+        .setTimestamp();
+
+      return interaction.reply({ embeds: [embed], ephemeral: true });
+    }
+  }
+
   // --- 2. Button Interactions ---
   if (interaction.isButton()) {
     
+    // Handler for the "مستعد للشراء ؟" button
+    if (interaction.customId === 'buy_panel_btn') {
+      const row = new ActionRowBuilder().addComponents(
+        new StringSelectMenuBuilder()
+          .setCustomId('buy_select_product')
+          .setPlaceholder('اختر المنتج الذي تود شراءه...')
+          .addOptions(
+            new StringSelectMenuOptionBuilder()
+              .setLabel('فك باند فورت نايت')
+              .setValue('fn_unban'),
+            new StringSelectMenuOptionBuilder()
+              .setLabel('فك باند العاب perm')
+              .setValue('perm_unban')
+          )
+      );
+      
+      return interaction.reply({ 
+        content: 'يرجى اختيار المنتج من القائمة المنسدلة بالأسفل للحصول على تفاصيل الدفع:', 
+        components: [row], 
+        ephemeral: true 
+      });
+    }
+
     // A. Single Key Creation
     if (interaction.customId === 'btn_create_single') {
       await interaction.deferReply();
