@@ -129,6 +129,36 @@ client.once('ready', async () => {
   } catch (error) {
     console.error('⚠️ [ERROR] Failed to register slash commands:', error);
   }
+
+  // --- Auto-send Buy Panel on Startup ---
+  try {
+    const buyChannelId = '1492148232439074990';
+    const buyChannel = await client.channels.fetch(buyChannelId);
+    
+    if (buyChannel) {
+      const messages = await buyChannel.messages.fetch({ limit: 10 });
+      const hasPanel = messages.some(m => m.embeds.length > 0 && m.embeds[0].title === '🛒 قسم المبيعات - متجر T3N');
+      
+      if (!hasPanel) {
+        const embed = new EmbedBuilder()
+          .setTitle('🛒 قسم المبيعات - متجر T3N')
+          .setDescription('أهلاً بك في قسم الشراء،\nالرجاء الضغط على الزر بالأسفل لاختيار المنتج واستكمال خطوات الدفع.')
+          .setColor('#1E90FF');
+
+        const btn = new ActionRowBuilder().addComponents(
+          new ButtonBuilder()
+            .setCustomId('buy_panel_btn')
+            .setLabel('مستعد للشراء ؟')
+            .setStyle(ButtonStyle.Primary)
+        );
+
+        await buyChannel.send({ embeds: [embed], components: [btn] });
+        console.log('✅ Auto-sent Buy Panel successfully!');
+      }
+    }
+  } catch (err) {
+    console.error('⚠️ [ERROR] Failed to auto-send Buy Panel:', err);
+  }
 });
 
 // ====== Interaction Handler ======
