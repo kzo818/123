@@ -129,36 +129,6 @@ client.once('ready', async () => {
   } catch (error) {
     console.error('⚠️ [ERROR] Failed to register slash commands:', error);
   }
-
-  // --- Auto-send Buy Panel on Startup ---
-  try {
-    const buyChannelId = '1492148232439074990';
-    const buyChannel = await client.channels.fetch(buyChannelId);
-    
-    if (buyChannel) {
-      const messages = await buyChannel.messages.fetch({ limit: 10 });
-      const hasPanel = messages.some(m => m.embeds.length > 0 && m.embeds[0].title === '🛒 قسم المبيعات - متجر T3N');
-      
-      if (!hasPanel) {
-        const embed = new EmbedBuilder()
-          .setTitle('🛒 قسم المبيعات - متجر T3N')
-          .setDescription('أهلاً بك في قسم الشراء،\nالرجاء الضغط على الزر بالأسفل فقط عند الاستعداد للشراء ولاختيار المنتج واستكمال خطوات الدفع.')
-          .setColor('#1E90FF');
-
-        const btn = new ActionRowBuilder().addComponents(
-          new ButtonBuilder()
-            .setCustomId('buy_panel_btn')
-            .setLabel('مستعد للشراء ؟')
-            .setStyle(ButtonStyle.Primary)
-        );
-
-        await buyChannel.send({ embeds: [embed], components: [btn] });
-        console.log('✅ Auto-sent Buy Panel successfully!');
-      }
-    }
-  } catch (err) {
-    console.error('⚠️ [ERROR] Failed to auto-send Buy Panel:', err);
-  }
 });
 
 // ====== Interaction Handler ======
@@ -172,7 +142,7 @@ client.on('interactionCreate', async (interaction) => {
 
       const embed = new EmbedBuilder()
         .setTitle('🛒 قسم المبيعات - متجر T3N')
-        .setDescription('أهلاً بك في قسم الشراء،\nالرجاء الضغط على الزر بالأسفل فقط عند الاستعداد للشراء ولاختيار المنتج واستكمال خطوات الدفع.')
+        .setDescription('أهلاً بك في قسم الشراء،\nالرجاء الضغط على الزر بالأسفل لاختيار المنتج واستكمال خطوات الدفع.')
         .setColor('#1E90FF');
 
       const btn = new ActionRowBuilder().addComponents(
@@ -252,7 +222,7 @@ client.on('interactionCreate', async (interaction) => {
         .setTitle('🧾 تفاصيل الدفع لتأكيد الطلب')
         .setDescription(`المنتج المطلوب: **${productName}**\nالسعر الإجمالي: **${price}**\n\nالرجاء تحويل المبلغ إلى الحساب البنكي التالي:`)
         .addFields(
-          { name: '🏦 بنك الإنماء - الآيبان (IBAN)', value: '`SA1205000068207052071000`' },
+          { name: '🏦 رقم الحساب (IBAN)', value: '`SA1205000068207052071000`' },
           { name: '👤 اسم صاحب الحساب', value: 'ياسر محمد البلوي' },
           { name: '⚠️ تعليمات الاستلام', value: 'بعد إتمام التحويل، يرجى إرسال **رسالة وإيصال التحويل في تذكرة الدعم** ليتم تسليمك رتبتك، منتجك، والمفتاح الخاص بك مباشرة.' }
         )
@@ -474,9 +444,39 @@ client.on('interactionCreate', async (interaction) => {
 // ====== Sync Announcements to Firebase ======
 const ANNOUNCE_CHANNEL_ID = '1416534916027519037';
 
+// ====== Anti-Spam Filter ======
+const SPAM_PROTECTED_CHANNELS = ['1396971888554672129', '1396960054476935469'];
+
 client.on('messageCreate', async (message) => {
   if (message.author.bot) return;
-  
+
+  // 🛡️ Anti-Spam: Check protected channels
+  if (SPAM_PROTECTED_CHANNELS.includes(message.channelId)) {
+    const content = message.content.toLowerCase().trim();
+    const hasAttachments = message.attachments.size > 0;
+
+    const isCheckMyBio = content.includes('check my bio');
+    const isBroWithImage = content.includes('bro') && hasAttachments;
+    const isCheckMyBioWithImage = isCheckMyBio && hasAttachments;
+
+    if (isCheckMyBio || isBroWithImage || isCheckMyBioWithImage) {
+      try {
+        // Delete the spam message
+        await message.delete();
+        console.log(`🛡️ [Anti-Spam] Deleted spam from ${message.author.tag} in #${message.channel.name}: "${message.content.substring(0, 50)}"`);
+
+        // Timeout the user for 10 minutes (600000ms)
+        if (message.member && message.member.moderatable) {
+          await message.member.timeout(10 * 60 * 1000, 'T3N Anti-Spam: رسالة سبام محذوفة تلقائياً');
+          console.log(`🛡️ [Anti-Spam] Timed out ${message.author.tag} for 10 minutes`);
+        }
+      } catch (err) {
+        console.error('❌ [Anti-Spam] Error:', err.message);
+      }
+      return; // Don't process this message further
+    }
+  }
+
   if (message.channelId === ANNOUNCE_CHANNEL_ID) {
     try {
       const attachments = message.attachments.map(a => a.url); // Extract file/image URLs
@@ -496,35 +496,6 @@ client.on('messageCreate', async (message) => {
       console.log(`✅ Notification synced to Firebase: ${content.substring(0, 30)}...`);
     } catch (err) {
       console.error('❌ Failed to sync notification to Firebase:', err);
-    }
-  }
-});
-
-// ====== Auto-Send Buy Panel in Tickets ======
-client.on('channelCreate', async (channel) => {
-  // Check if it's an actual channel object and has a name with the ticket emoji
-  if (channel && channel.name && channel.name.includes('🎫')) {
-    try {
-      const embed = new EmbedBuilder()
-        .setTitle('🛒 قسم المبيعات - متجر T3N')
-        .setDescription('أهلاً بك في قسم الشراء،\nالرجاء الضغط على الزر بالأسفل فقط عند الاستعداد للشراء ولاختيار المنتج واستكمال خطوات الدفع.')
-        .setColor('#1E90FF');
-
-      const btn = new ActionRowBuilder().addComponents(
-        new ButtonBuilder()
-          .setCustomId('buy_panel_btn')
-          .setLabel('مستعد للشراء ؟')
-          .setStyle(ButtonStyle.Primary)
-      );
-
-      // Wait a short time to allow bot permissions/ticket messages to load
-      setTimeout(async () => {
-        await channel.send({ embeds: [embed], components: [btn] });
-      }, 2000);
-      
-      console.log(`✅ Sent Buy Panel in new ticket: ${channel.name}`);
-    } catch (err) {
-      console.error(`❌ Failed to send Buy Panel in ticket ${channel.name}:`, err);
     }
   }
 });
